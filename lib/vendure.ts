@@ -1,22 +1,43 @@
-// ─── Vendure Client with Bearer Token ─────────────────────────────────────────
+// ─── Vendure Client with Bearer Token (Cookie-based) ──────────────────────────
 const VENDURE_API = process.env.NEXT_PUBLIC_VENDURE_API || 'https://bramjlive.com/shop-api'
 const TOKEN_KEY = 'vendure_token'
 
-function getToken(): string | null {
-  if (typeof window === 'undefined') return null
-  try { return localStorage.getItem(TOKEN_KEY) } catch { return null }
+// ── Cookie helpers (work on both client & server) ──
+function getTokenFromCookie(): string | null {
+  if (typeof document === 'undefined') return null
+  try {
+    const match = document.cookie.match(new RegExp('(?:^|; )' + TOKEN_KEY + '=([^;]*)'))
+    return match ? decodeURIComponent(match[1]) : null
+  } catch { return null }
 }
 
-function saveToken(token: string | null) {
-  if (typeof window === 'undefined' || !token) return
-  try { localStorage.setItem(TOKEN_KEY, token) } catch {}
+function saveTokenToCookie(token: string | null) {
+  if (typeof document === 'undefined' || !token) return
+  try {
+    // الكوكي بيفضل شغال 30 يوم
+    const expires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toUTCString()
+    document.cookie = `${TOKEN_KEY}=${encodeURIComponent(token)}; expires=${expires}; path=/; SameSite=Lax; Secure`
+  } catch {}
+}
+
+// ── للقراءة من الـ request على السيرفر (Server Actions / Route Handlers) ──
+export function getTokenFromRequestCookie(cookieHeader: string | null): string | null {
+  if (!cookieHeader) return null
+  try {
+    const match = cookieHeader.match(new RegExp('(?:^|; )' + TOKEN_KEY + '=([^;]*)'))
+    return match ? decodeURIComponent(match[1]) : null
+  } catch { return null }
 }
 
 export async function vendureFetch<T = any>(
   query: string,
-  variables: Record<string, any> = {}
+  variables: Record<string, any> = {},
+  cookieHeader?: string | null, // للاستخدام من السيرفر
 ): Promise<T> {
-  const token = getToken()
+  // جرب تجيب الـ token من الكوكي (client أو server)
+  const token = cookieHeader
+    ? getTokenFromRequestCookie(cookieHeader)
+    : getTokenFromCookie()
 
   const res = await fetch(VENDURE_API, {
     method: 'POST',
@@ -25,13 +46,16 @@ export async function vendureFetch<T = any>(
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify({ query, variables }),
+    cache: 'no-store', // مهم عشان Next.js ما يعملش cache للـ cart requests
   })
 
-  // ── Read & save token from response header ──
+  // ── احفظ الـ token الجديد لو Vendure بعته ──
   const newToken =
     res.headers.get('vendure-auth-token') ||
     res.headers.get('Vendure-Auth-Token')
-  if (newToken) saveToken(newToken)
+  if (newToken) {
+    saveTokenToCookie(newToken)
+  }
 
   const json = await res.json()
 
