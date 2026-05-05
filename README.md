@@ -1,2 +1,2 @@
 # vendure-rtl-storefront
-vendure storefront in arabic
+vendure storefront in arabic next js
